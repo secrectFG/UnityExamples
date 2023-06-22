@@ -199,6 +199,7 @@ namespace Test
             var FullName = typeof(T).FullName;
             netComponent?.Send(FullName,msg.ToByteArray());
         }
+        
 
         public void SendReq<T>(T msg, Action<byte[]> callback) where T : IMessage
         {

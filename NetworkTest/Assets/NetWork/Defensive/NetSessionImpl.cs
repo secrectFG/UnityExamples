@@ -30,12 +30,13 @@ namespace DefensiveNet
 
     class NetData
     {
+        public NetworkStream stream;
         public Socket socket;
         public byte[] recvBuffer;
         public MemoryStream msgStream;
         public bool isEstablished;
 
-        public Queue<byte> sendQueue;
+        // public Queue<byte> sendQueue;
         public bool isSending;
 
         public List<NetByteArray> cacheProtocolDataList;
@@ -51,7 +52,7 @@ namespace DefensiveNet
             msgStream = null;
             isEstablished = false;
 
-            sendQueue = new Queue<byte>();
+            // sendQueue = new Queue<byte>();
             isSending = false;
 
             cacheProtocolDataList = new List<NetByteArray>();
@@ -59,81 +60,6 @@ namespace DefensiveNet
 
             netDataBuffer_ = new byte[4096];
             netDataBufferLength_ = 0;
-        }
-
-        //接受网络原始数据
-        public void acceptNetData(byte[] buffer, int length)
-        {
-            if (netDataBuffer_.Length < length + netDataBufferLength_)
-            {
-                int l = netDataBuffer_.Length;
-                while (l < length + netDataBufferLength_)
-                {
-                    l *= 2;
-                }
-
-                byte[] tmpBuffer = new byte[l];
-                Array.Copy(netDataBuffer_, tmpBuffer, netDataBufferLength_);
-                netDataBuffer_ = tmpBuffer;
-            }
-            Array.Copy(buffer, 0, netDataBuffer_, netDataBufferLength_, length);
-            netDataBufferLength_ += length;
-        }
-
-        //分发数据
-        public void splitNetDataToProtocols(Action<byte[], int, int> handler)
-        {
-            //包头长度
-            var iPacketHeadSize = 4;
-            while (true)
-            {
-                //是否包头
-                if (netDataBufferLength_ < iPacketHeadSize)
-                {
-                    break;
-                }
-
-                //有效数据
-                int len = IPAddress.NetworkToHostOrder(BitConverter.ToInt32(netDataBuffer_, 0));
-
-                //完整数据
-                if (netDataBufferLength_ < len + iPacketHeadSize)
-                {
-                    break;
-                }
-
-                //缓存个数
-                if (cacheProtocolDataList.Count <= cacheProtocolValidLength)
-                {
-                    cacheProtocolDataList.Add(new NetByteArray());
-                }
-
-                //完整数据
-                NetByteArray nba = cacheProtocolDataList[cacheProtocolValidLength++];
-                nba.CopyWholePacket(netDataBuffer_, iPacketHeadSize + len);
-
-                //缓冲移动
-                Array.Copy(netDataBuffer_, iPacketHeadSize + len, netDataBuffer_, 0, netDataBufferLength_ - iPacketHeadSize - len);
-
-                //总长度减去数据+包头
-                netDataBufferLength_ -= (iPacketHeadSize + len);
-            }
-
-            //派发数据
-            while (cacheProtocolValidLength > 0)
-            {
-                NetByteArray nba = cacheProtocolDataList[0];
-                cacheProtocolDataList.RemoveAt(0);
-                cacheProtocolValidLength--;
-
-                if (nba.EntityLength > 0)
-                {
-                    handler?.Invoke(nba.Data, 0, nba.EntityLength);
-                    nba.EntityLength = 0;
-                }
-
-                cacheProtocolDataList.Add(nba);
-            }
         }
     }
 
@@ -307,12 +233,6 @@ namespace DefensiveNet
             return false;
         }
 
-        //接收回调
-        public void _onRecvNetData(byte[] buffer, int index, int length)
-        {
-            NetMessageEvent?.Invoke(this, buffer, index, length);
-        }
-
         //关闭连接
         public void Disconnect(bool bInvoke, string errorMessage)
         {
@@ -346,24 +266,8 @@ namespace DefensiveNet
                     //网络对象
                     if (netData_ != null && netData_.isEstablished)
                     {
-                        try
-                        {
-                            for (int i = 0; i < length; ++i)
-                            {
-                                netData_.sendQueue.Enqueue(buffer[index + i]);
-                            }
-                            if (!netData_.isSending)
-                            {
-                                netData_.isSending = true;
-                                netData_.socket.BeginSend(netData_.sendQueue.ToArray(), 0, netData_.sendQueue.Count, SocketFlags.None, new AsyncCallback(_onBeginSendCallback), netData_);
-                            }
-                            return true;
-                        }
-                        catch (System.Exception ex)
-                        {
-                            _onNetworkError(true, $"SOCKET发送数据异常：{ex.Message}");
-                            return false;
-                        }
+                        netData_.stream.Write(buffer, index, length);
+                        //Debug.Log("Send len:" + length);
                     }
 
                     return false;
@@ -412,6 +316,8 @@ namespace DefensiveNet
 
                         }
                         //连接回调
+                        NetworkStream stream = new NetworkStream(netData_.socket, false);
+                        netData_.stream = stream;
                         NetConnectEvent?.Invoke(this, index_, true);
                     }
                 }
@@ -433,113 +339,49 @@ namespace DefensiveNet
         }
 
         //投递接收
-        protected void _beginReceive()
+        protected async void _beginReceive()
         {
             try
             {
-                //对象加锁
-                lock (sessionLock_)
-                {
-                    //初始状态
-                    if (!isInitialize_) return;
 
-                    //网络对象
-                    if (netData_ != null && netData_.isEstablished)
+                byte[] dataBuffer = new byte[1024 * 512+4];
+                while (netData_ != null && netData_.isEstablished)
+                {
+                    int bytesRead = await netData_.stream.ReadAsync(dataBuffer, 0, 4);
+                    // Debug.Log("bytesRead:" + bytesRead);
+                    if (bytesRead != 4)
                     {
-                        netData_.socket.BeginReceive(netData_.recvBuffer, 0, netData_.recvBuffer.Length, SocketFlags.None, new AsyncCallback(_beginReceiveCallback), netData_);
+                        throw new InvalidOperationException("接收包头长度错误:" + bytesRead);
                     }
+                    int packetLength = IPAddress.NetworkToHostOrder(BitConverter.ToInt32(dataBuffer, 0));
+                    if (packetLength > dataBuffer.Length)
+                    {
+                        throw new InvalidOperationException("数据包过大！长度:" + packetLength + "最大缓冲:" + dataBuffer.Length);
+                    }
+                    // 读取整个数据包
+                    int totalBytesRead = 0;
+                    while (totalBytesRead < packetLength)
+                    {
+                        bytesRead = await netData_.stream.ReadAsync(dataBuffer, totalBytesRead+4, packetLength - totalBytesRead);
+                        if (bytesRead == 0)
+                        {
+                            // 连接已关闭
+                            throw new InvalidOperationException("连接已关闭");
+                        }
+                        totalBytesRead += bytesRead;
+                    }
+                    //Debug.Log("_onRecvNetData packetLength:" + packetLength);
+                    NetMessageEvent?.Invoke(this, dataBuffer, 0, packetLength+4);
                 }
             }
             catch (System.Exception ex)
             {
                 //调试信息
-                Debug.LogWarning($"网络日志, 网络准备接收出现异常{ex.Message}");
+                Debug.LogWarning($"网络日志, 网络准备接收出现异常:{ex.Message}");
 
                 //网络断开
                 _onNetworkError(true, "网络准备接收异常");
                 return;
-            }
-        }
-
-
-        //接收回调
-        protected void _beginReceiveCallback(IAsyncResult ar)
-        {
-            try
-            {
-                //对象加锁
-                lock (sessionLock_)
-                {
-                    //初始标志
-                    if (!isInitialize_) return;
-
-                    //网络对象
-                    if (netData_ != null && netData_.isEstablished)
-                    {
-                        //接收时间
-                        dbRecvDataTickCount_ = NetHelper.GetTickCount();
-                        //接收结果
-                        int len = netData_.socket.EndReceive(ar);
-                        if (len > 0)
-                        {
-                            //接收数据
-                            netData_.acceptNetData(netData_.recvBuffer, len);
-                            //分发数据
-                            netData_.splitNetDataToProtocols(_onRecvNetData);
-                        }
-                    }
-                }
-
-                //准备接收
-                _beginReceive();
-            }
-            catch (System.Exception ex)
-            {
-                //调试信息
-                Debug.LogWarning($"网络日志, 网络数据接收回调出现异常{ex.Message}");
-
-                //网络断开
-                _onNetworkError(true, "网络数据接收回调异常");
-                return;
-            }
-        }
-
-        //发送回调
-        protected void _onBeginSendCallback(IAsyncResult ar)
-        {
-            try
-            {
-                //对象加锁
-                lock (sessionLock_)
-                {
-
-                    //初始状态
-                    if (!isInitialize_) return;
-
-                    //网络对象
-                    if (netData_ != null && netData_.isEstablished)
-                    {
-                        netData_.isSending = false;
-                        int sendedCount = netData_.socket.EndSend(ar);
-                        while (sendedCount-- > 0)
-                        {
-                            netData_.sendQueue.Dequeue();
-                        }
-                        if (ReferenceEquals(netData_, netData_) && netData_.sendQueue.Count > 0)
-                        {
-                            netData_.isSending = true;
-                            netData_.socket.BeginSend(netData_.sendQueue.ToArray(), 0, netData_.sendQueue.Count, SocketFlags.None, new AsyncCallback(_onBeginSendCallback), netData_);
-                        }
-                    }
-                }
-            }
-            catch (System.Exception ex)
-            {
-                //调试信息
-                Debug.LogWarning($"网络日志, 网络数据发送回调异常{ex.Message}");
-
-                //网络断开
-                _onNetworkError(true, "网络数据发送回调出现异常");
             }
         }
 

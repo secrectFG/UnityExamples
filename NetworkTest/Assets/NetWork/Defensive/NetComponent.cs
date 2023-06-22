@@ -228,7 +228,7 @@ namespace DefensiveNet
 
         private MemoryStream sharedMemoryStream_ = new MemoryStream();                              //内存对象
 
-        private List<NetSendData> sendDataList_ = null;                                             //发送数组
+        private Queue<NetSendData> sendDataList_ = null;                                             //发送数组
 
         private BlockingQueue<NetSendData> sendDataQueue_ = null;                                   //发送集合
         private BlockingQueue<NetRecvData> recvDataQueue_ = null;                                   //接收集合
@@ -285,7 +285,7 @@ namespace DefensiveNet
                         //构建对象
                         sendDataQueue_ = new BlockingQueue<NetSendData>();
                         recvDataQueue_ = new BlockingQueue<NetRecvData>();
-                        sendDataList_ = new List<NetSendData>();
+                        sendDataList_ = new Queue<NetSendData>();
 
                         //连接条数
                         maxStart_ = maxStart > 0 ? maxStart : maxStart_;
@@ -1109,9 +1109,13 @@ namespace DefensiveNet
                             //缓存加锁
                             lock (sendlistLock_)
                             {
+                                //byte[] sendbuf = new byte[(int)sharedMemoryStream_.Length];
+                                //sharedMemoryStream_.Position = 0;
+                                //sharedMemoryStream_.Read(sendbuf, 0, sendbuf.Length);
                                 //缓存队列
                                 NetSendData sendData = new NetSendData(session, wMsgType, protocolName,sharedMemoryStream_.GetBuffer(), lClientSendIndex_, (int)sharedMemoryStream_.Length);
-                                sendDataList_.Add(sendData);
+                                sendDataList_.Enqueue(sendData);
+                                //Debug.Log("sendDataList_:"+sendDataList_.Count);
 
                                 //通知发送
                                 sendDataQueue_.Enqueue(sendData);
@@ -1218,13 +1222,14 @@ namespace DefensiveNet
                         while (sendDataList_.Count > 0)
                         {
                             // 首个数据
-                            NetSendData sendData = sendDataList_[0];
+                            NetSendData sendData = sendDataList_.Peek();
 
                             // 判断索引
                             if (sendData.sendIndex_ <= ServerRecvIndex)
                             {
                                 //删除数据
-                                sendDataList_.RemoveAt(0);
+                                sendDataList_.Dequeue();
+                                Debug.Log("RemoveAt sendDataList_:" + sendDataList_.Count);
 
                                 /*
                                 //调试信息
