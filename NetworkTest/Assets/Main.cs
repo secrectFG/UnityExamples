@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using DefensiveNet;
 using Test;
 using UnityEngine;
@@ -29,27 +30,20 @@ public class Main : MonoBehaviour
         network.Close();
     }
 
+
+
     // Start is called before the first frame update
     IEnumerator Start()
     {
+        ConfigReader configReader = new ConfigReader();
         NetHelper.AllowNetLoger = true;
         //从streamingassets读取maxstart.txt，获取maxstart数值
-        int maxStart = 10;
-        if (File.Exists(Application.streamingAssetsPath + "/maxstart.txt"))
-        {
-            maxStart = int.Parse(File.ReadAllText(Application.streamingAssetsPath + "/maxstart.txt"));
-        }
-        Debug.Log($"maxStart:{maxStart}");
+        int maxStart = int.Parse(configReader.ConfigData["maxstart"]);
+        var iplist = configReader.ConfigData["iplist"].Split(',');
+        
+        Debug.Log($"maxStart:{maxStart} iplist:{string.Join(",",iplist)}");
         network.maxStart = maxStart;
-        network.IpList = new List<string>() {
-            //"2406:da1e:2b:bc02:ad79:efaf:39f8:8f42"
-            //"43.198.71.223",
-            //"43.198.102.201"
-            "game626a.com",
-            "game626b.com",
-            "game626c.com",
-
-            };
+        network.IpList = iplist.ToList();
         network.port = 9000;
         network.Login("test", () =>
         {
