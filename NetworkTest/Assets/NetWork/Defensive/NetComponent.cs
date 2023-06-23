@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using System.Net;
 using System.Security.Cryptography;
 using System.Collections.Concurrent;
+using UnityEngine.Profiling;
 
 namespace DefensiveNet
 {
@@ -67,6 +68,17 @@ namespace DefensiveNet
             length_ = length;
             session_ = session;
         }
+        public NetSendData(INetSession session, NetMessageType wMsgType, string protocolName, MemoryStream stream, ulong sendIndex)
+        {
+            wMsgType_ = wMsgType;
+            protocolName_ = protocolName;
+            data_ = new byte[stream.Length + 1];
+            stream.Position = 0;
+            stream.Read(data_, 0, data_.Length);
+            sendIndex_ = sendIndex;
+            length_ = (int)stream.Length;
+            session_ = session;
+        }
     }
 
     public class NetRecvData
@@ -86,107 +98,9 @@ namespace DefensiveNet
         }
     }
 
-    public class BlockingQueue<T>
-    {
-        //队列名称
-        private string m_name;
-        //FIFO队列
-        private Queue<T> m_queue;
-        //是否运行中
-        private bool m_isRunning;
-        //出队手动复位事件
-        private ManualResetEvent m_dequeueWait;
-        /// <summary>
-        /// 队列长度
-        /// </summary>
-        public int Count => m_queue.Count;
 
-        public BlockingQueue(string name = "BlockingQueue")
-        {
-            m_name = name;
-            m_isRunning = true;
-            m_queue = new Queue<T>();
-            m_dequeueWait = new ManualResetEvent(false); // 无信号, 出队waitOne阻塞
 
-        }
-
-        /// <summary>
-        /// 关闭阻塞队列
-        /// </summary>
-        public void Close()
-        {
-            // 停止队列
-            m_isRunning = false;
-            // 发送信号，通知出队阻塞waitOne可继续执行，可进行出队操作
-            m_dequeueWait.Set();
-        }
-
-        public void Clear()
-        {
-            //清空队列
-            lock (m_queue)
-            {
-                while (m_queue.Count > 0)
-                {
-                    m_queue.Dequeue();
-                }
-            }
-        }
-
-        /// <summary>
-        /// 入队
-        /// </summary>
-        /// <param name="item"></param>
-        public void Enqueue(T item)
-        {
-            if (!m_isRunning)
-            {
-                return;
-            }
-
-            lock (m_queue)
-            {
-                m_queue.Enqueue(item);
-                // 发送信号，通知出队阻塞waitOne可继续执行，可进行出队操作
-                m_dequeueWait.Set();
-            }
-        }
-
-        /// <summary>
-        /// 出队
-        /// </summary>
-        /// <param name="item"></param>
-        /// <returns></returns>
-        public bool Dequeue(out T item)
-        {
-            while (true)
-            {
-                if (!m_isRunning)
-                {
-                    lock (m_queue)
-                    {
-                        item = default(T);
-                        return false;
-                    }
-                }
-                lock (m_queue)
-                {
-                    // 如果队列有数据，则执行出队
-                    if (m_queue.Count > 0)
-                    {
-                        item = m_queue.Dequeue();
-                        // 置为无信号
-                        m_dequeueWait.Reset();
-                        return true;
-                    }
-                }
-                // 如果队列无数据，则阻塞队列，停止出队，等待信号
-                m_dequeueWait.WaitOne();
-            }
-        }
-    }
-
-    public class NetComponent : IDisposable,INetComponent
+    public class NetComponent : IDisposable, INetComponent
     {
         private string sessionGuid_ = string.Empty;
         private byte[] encryptKey_ = null;
@@ -225,8 +139,6 @@ namespace DefensiveNet
 
         private string localAddres_ = "";                                                           //本机地址
         private string encrpty_string_ = "badangel44..";                                            //加密子串
-
-        private MemoryStream sharedMemoryStream_ = new MemoryStream();                              //内存对象
 
         private Queue<NetSendData> sendDataList_ = null;                                             //发送数组
 
@@ -317,7 +229,7 @@ namespace DefensiveNet
                         }
 
                         //调试信息
-                        Debug.LogWarning($"网络日志, 首次连接, 标识:" + networkGuid_);
+                        Debug.Log($"网络日志, 首次连接, 标识:" + networkGuid_);
                     }
 
 
@@ -419,7 +331,7 @@ namespace DefensiveNet
                     if (GetConnectCount() == 0)
                     {
                         //判断延退
-                        if(dbDelayQuitTime_ != 0 && NetHelper.GetTickCount() > dbDelayQuitTime_)
+                        if (dbDelayQuitTime_ != 0 && NetHelper.GetTickCount() > dbDelayQuitTime_)
                         {
                             //调试信息
                             if (NetHelper.AllowNetLoger)
@@ -440,7 +352,7 @@ namespace DefensiveNet
                     else
                     {
                         //延退时间
-                        if(dbDelayQuitTime_ != 0)
+                        if (dbDelayQuitTime_ != 0)
                         {
                             //调试信息
                             if (NetHelper.AllowNetLoger)
@@ -489,7 +401,7 @@ namespace DefensiveNet
             catch (Exception ex)
             {
                 //调试信息
-                Debug.LogWarning($"网络日志, 连接回调出现异常{ex.Message}");
+                Debug.LogWarning($"网络日志, 连接回调出现异常{ex.Message} {ex.StackTrace}");
             }
         }
 
@@ -522,14 +434,14 @@ namespace DefensiveNet
         {
             try
             {
+                //初始标志
+                if (!isInitialize_) return;
+
+                //消息入队
+                NetRecvData recvData = new NetRecvData(session, buffer, index, length);
                 //自旋加锁
                 lock (recvdataLock_)
                 {
-                    //初始标志
-                    if (!isInitialize_) return;
-
-                    //消息入队
-                    NetRecvData recvData = new NetRecvData(session, buffer, index, length);
                     recvDataQueue_.Enqueue(recvData);
                 }
             }
@@ -556,7 +468,7 @@ namespace DefensiveNet
                     useSessionList_.Remove(session);
 
                     //判断延退
-                    if(useSessionList_.Count == 0 && dbDelayQuitTime_ == 0)
+                    if (useSessionList_.Count == 0 && dbDelayQuitTime_ == 0)
                     {
                         //调试信息
                         if (NetHelper.AllowNetLoger)
@@ -706,6 +618,7 @@ namespace DefensiveNet
                                         if (!useSessionList_.Contains(session))
                                         {
                                             useSessionList_.Add(session);
+                                            Debug.Log($"网络日志, 添加对象:{session} count:{useSessionList_.Count}");
                                         }
 
                                         //重发缓存
@@ -776,7 +689,7 @@ namespace DefensiveNet
 
                                     break;
                                 }
-                                
+
                             case (ushort)NetMessageType.MSG_TYPE_SERVER_DEFEND:
                                 {
                                     //结束接收
@@ -830,7 +743,7 @@ namespace DefensiveNet
                                         //服务序号
                                         var ServerSendIndex = BitConverter.ToUInt64(buffer, encryptStart + 8);
                                         var ServerRecvIndex = BitConverter.ToUInt64(buffer, encryptStart + 8 + 8);
-                                        
+
                                         /*
                                         //调试信息
                                         if (NetHelper.AllowNetLoger)
@@ -936,6 +849,8 @@ namespace DefensiveNet
                     Debug.LogWarning($"网络日志, 接收线程出现异常:{ex.Message}, 消息类型：{wMsgType}");
                 }
             }
+            //GC.Collect();
+
 
             //调试信息
             if (NetHelper.AllowNetLoger)
@@ -990,34 +905,33 @@ namespace DefensiveNet
         */
         public bool Send(string protocolName, byte[] pbContent, NetMessageType wMsgType, INetSession session)
         {
+            //初始标志
+            if (!isInitialize_) return false;
+
             try
             {
-                //自旋加锁
-                lock (senddataLock_)
+                //条件判断
+                if (isConnected_
+                || wMsgType == NetMessageType.MSG_TYPE_NORMAL_DATA
+                || wMsgType == NetMessageType.MSG_TYPE_QUICK_CONNECT
+                || wMsgType == NetMessageType.MSG_TYPE_CLIENT_QUIT)
                 {
-                    //初始标志
-                    if (!isInitialize_) return false;
-
-                    //条件判断
-                    if (isConnected_ || wMsgType == NetMessageType.MSG_TYPE_NORMAL_DATA || wMsgType == NetMessageType.MSG_TYPE_QUICK_CONNECT || wMsgType == NetMessageType.MSG_TYPE_CLIENT_QUIT)
+                    //数据准备
+                    var sendMemoryData = new MemoryStream();
+                    var bw = new BinaryWriter(sendMemoryData);
+                    //发送序号
+                    ulong lClientSendIndex = 0;
+                    lock (senddataLock_)
                     {
-                        //数据准备
-                        sharedMemoryStream_.Position = 0;
-                        sharedMemoryStream_.SetLength(0);
-
                         //是否加密
                         bool useEncrypt = encryptKey_ != null;
                         byte encryptControlFlag = useEncrypt ? (byte)1 : (byte)0;   //当前加密版本号是1 0代表未加密
-                        
-                        //发送序号
-                        ulong lClientSendIndex = 0;
-                        if(wMsgType == NetMessageType.MSG_TYPE_NORMAL_DATA)
+
+
+                        if (wMsgType == NetMessageType.MSG_TYPE_NORMAL_DATA)
                         {
                             lClientSendIndex = ++lClientSendIndex_;
                         }
-
-                        //构造数据
-                        var bw = new BinaryWriter(sharedMemoryStream_);
 
                         //消息类型
                         switch (wMsgType)
@@ -1091,61 +1005,67 @@ namespace DefensiveNet
                         {
                             //加密开始
                             int encryptStart = 4 + 2 + 8 + 1;
-                            NetHelper.Rc4Algorithm(encryptKey_, sharedMemoryStream_.GetBuffer(), encryptStart, (int)sharedMemoryStream_.Length - encryptStart);
+                            NetHelper.Rc4Algorithm(encryptKey_, sendMemoryData.GetBuffer(), encryptStart, (int)sendMemoryData.Length - encryptStart);
                         }
 
                         //重置位置
-                        sharedMemoryStream_.Position = 0;
+                        sendMemoryData.Position = 0;
 
                         //有效数据
-                        int dataSize = (int)sharedMemoryStream_.Length - 4;
+                        int dataSize = (int)sendMemoryData.Length - 4;
 
                         //包头大小
                         int networkLen = IPAddress.HostToNetworkOrder(dataSize);
                         bw.Write(networkLen);
-
-                        try
-                        {
-                            //缓存加锁
-                            lock (sendlistLock_)
-                            {
-                                //byte[] sendbuf = new byte[(int)sharedMemoryStream_.Length];
-                                //sharedMemoryStream_.Position = 0;
-                                //sharedMemoryStream_.Read(sendbuf, 0, sendbuf.Length);
-                                //缓存队列
-                                NetSendData sendData = new NetSendData(session, wMsgType, protocolName,sharedMemoryStream_.GetBuffer(), lClientSendIndex_, (int)sharedMemoryStream_.Length);
-                                sendDataList_.Enqueue(sendData);
-                                //Debug.Log("sendDataList_:"+sendDataList_.Count);
-
-                                //通知发送
-                                sendDataQueue_.Enqueue(sendData);
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.LogWarning($"网络日志, 保存发送队列异常:" + ex.Message);
-                            return false;
-                        }
-
-                        /*
-                        //调试信息
-                        if (NetHelper.AllowNetLoger)
-                        {
-                            Debug.LogWarning($"网络日志, 发送数据, 类型:" + wMsgType);
-                        }
-                        */
-                        return true;
                     }
-                    else
+
+
+                    try
                     {
-                        //调试信息
-                        if (NetHelper.AllowNetLoger)
+                        //缓存加锁
+                        lock (sendlistLock_)
                         {
-                            Debug.LogWarning($"网络日志, 没有连接或不是退出包, 无法发送游戏数据, 类型：{wMsgType}");
+                            //缓存队列
+                            NetSendData sendData;
+                            if (Main.adddataold)
+                            {
+                                Debug.Log("add data old");
+                                sendData = new NetSendData(session, wMsgType, protocolName, sendMemoryData.GetBuffer(), lClientSendIndex, (int)sendMemoryData.Length);
+                            }
+                            else
+                                sendData = new NetSendData(session, wMsgType, protocolName, sendMemoryData, lClientSendIndex);
+                            sendDataList_.Enqueue(sendData);
+                            //Debug.Log("Enqueue :" + sendDataList_.Count + " Capacity:" + sharedMemoryStream_.Capacity);
+
+                            //通知发送
+                            sendDataQueue_.Enqueue(sendData);
                         }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogWarning($"网络日志, 保存发送队列异常:" + ex.Message);
                         return false;
                     }
+
+                    /*
+                    //调试信息
+                    if (NetHelper.AllowNetLoger)
+                    {
+                        Debug.LogWarning($"网络日志, 发送数据, 类型:" + wMsgType);
+                    }
+                    */
+                    return true;
                 }
+                else
+                {
+                    //调试信息
+                    if (NetHelper.AllowNetLoger)
+                    {
+                        Debug.LogWarning($"网络日志, 没有连接或不是退出包, 无法发送游戏数据, 类型：{wMsgType}");
+                    }
+                    return false;
+                }
+
             }
             catch (Exception ex)
             {
@@ -1157,7 +1077,7 @@ namespace DefensiveNet
         //线程循环
         public void Update()
         {
-            return;
+
         }
 
         //重发缓存数据
@@ -1229,7 +1149,7 @@ namespace DefensiveNet
                             {
                                 //删除数据
                                 sendDataList_.Dequeue();
-                                Debug.Log("RemoveAt sendDataList_:" + sendDataList_.Count);
+                                //Debug.Log("RemoveAt sendDataList_:" + sendDataList_.Count);
 
                                 /*
                                 //调试信息
@@ -1309,7 +1229,7 @@ namespace DefensiveNet
 
             //随机排序
             List<INetSession> RandomFreeSessionList = RandomSortList(FreeSessionList);
-            
+
             /*
             //调试日志
             if (NetHelper.AllowNetLoger)
@@ -1512,7 +1432,7 @@ namespace DefensiveNet
                 reConnectTimer_.Stop();
                 reConnectTimer_ = null;
             }
-            
+
             //主动退出
             if (bActive && IsConnected)
             {
@@ -1578,7 +1498,7 @@ namespace DefensiveNet
                 recvDataQueue_.Close();
                 recvDataQueue_.Clear();
             }
-            
+
             if (tRecvMessageTask_ != null)
             {
                 tRecvMessageTask_.Wait();

@@ -86,6 +86,8 @@ namespace DefensiveNet
             return timeSpan.TotalMilliseconds;
         }
 
+
+
         /// <summary>   
         /// Rc4算法，用于协议层加解密
         /// </summary>
@@ -96,14 +98,14 @@ namespace DefensiveNet
             int key_len = key.Length;
             int data_len = length;
 
-            int[] s = new int[256];
-            int[] k = new int[256];
+            byte[] s = new byte[256];
+            byte[] k = new byte[256];
 
             int i = 0, j = 0, temp;
 
             for (i = 0; i < 256; i++)
             {
-                s[i] = i;
+                s[i] = (byte)i;
                 k[i] = key[i % key_len];
             }
 
@@ -112,7 +114,7 @@ namespace DefensiveNet
                 j = (j + s[i] + k[i]) & 0xff;
                 temp = s[i];
                 s[i] = s[j];
-                s[j] = temp;
+                s[j] = (byte)temp;
             }
 
             int x = 0, y = 0, t = 0;
@@ -122,10 +124,11 @@ namespace DefensiveNet
                 y = (y + s[x]) & 0xff;
                 temp = s[x];
                 s[x] = s[y];
-                s[y] = temp;
+                s[y] = (byte)temp;
                 t = (s[x] + s[y]) & 0xff;
                 buffer[index + i] ^= (byte)s[t];
             }
+
         }
 
 

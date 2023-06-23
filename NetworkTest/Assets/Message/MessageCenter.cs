@@ -14,14 +14,14 @@
  ******************************************************************************/
 
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using UnityEngine;
 
 public class MessageCenter : MonoBehaviour
 {
 
-    ConcurrentQueue<Message> msgQueue = new ConcurrentQueue<Message>();
+    Queue<Message> msgQueue = new Queue<Message>();
+    object queueLock = new object();
 
     public static MessageCenter Instance { get; private set; }
     private void Awake()
@@ -112,9 +112,9 @@ public class MessageCenter : MonoBehaviour
 
     public void CleanMessage()
     {
-        while (msgQueue.TryDequeue(out Message msg))
+        lock (queueLock)
         {
-
+            msgQueue.Clear();
         }
     }
 
@@ -135,7 +135,15 @@ public class MessageCenter : MonoBehaviour
 
     public void Update()
     {
-        while (msgQueue.TryDequeue(out Message msg))
+        Message msg = null;
+        lock (queueLock)
+        {
+            if (msgQueue.Count > 0)
+            {
+                msg = msgQueue.Dequeue();
+            }
+        }
+        if (msg != null)
         {
             if (msg.Action != null)
             {

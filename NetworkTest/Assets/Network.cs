@@ -29,6 +29,7 @@ namespace Test
         //int port = 9000;
         bool connecting = false;
         public bool Logined => logined;
+        public int maxStart = 5;
         //public string Ip { get; set; } = "192.168.101.221";
         public List<string> IpList { get; set; } = new List<string> {  "47.101.147.244", "8.134.37.170", "8.210.106.28"  };
 
@@ -102,7 +103,7 @@ namespace Test
             loginStatus?.Invoke($"开始连接...{string.Join(",", IpList)} port:{port}");
             connecting = true;
             netComponent.Connect(IpList, port, 10000, 
-                maxStart:3,
+                maxStart:maxStart,
               callback:  b =>
             {
                 connecting = false;
